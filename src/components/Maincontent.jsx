@@ -11,7 +11,7 @@ function Maincontent() {
   const [editedSummary, setEditedSummary] = useState(null);
   const [message, setMessage] = useState("");
 
-  const API_BASE_URL = `https://summarizer-backend-hazel.vercel.app//api`;
+  const API_BASE_URL = `https://summarizer-backend-hazel.vercel.app/api`;
 
   const handleFileUpload = async (e) => {
     const file = e.target.files[0];
