@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import * as mammoth from "mammoth";
-import {BackendURL} from '../../config.js'
+
 function Maincontent() {
   const [text, setText] = useState("");
   const [userPrompt, setUserPrompt] = useState("");
@@ -11,6 +11,7 @@ function Maincontent() {
   const [editedSummary, setEditedSummary] = useState(null);
   const [message, setMessage] = useState("");
 
+  // Updated API URL to your Vercel deployment
   const API_BASE_URL = `https://summarizer-backend-eight.vercel.app/api`;
 
   const handleFileUpload = async (e) => {
@@ -37,6 +38,7 @@ function Maincontent() {
             setText(value);
             setMessage("File uploaded and processed successfully");
           } catch (error) {
+            console.error("Error processing document:", error);
             setMessage("Error processing document file. Please try again.");
             setIsFileSelected(false);
           }
@@ -47,6 +49,7 @@ function Maincontent() {
         setIsFileSelected(false);
       }
     } catch (error) {
+      console.error("Error uploading file:", error);
       setMessage("Error uploading file. Please try again.");
       setIsFileSelected(false);
     }
@@ -56,8 +59,14 @@ function Maincontent() {
 
   const handleTextareaChange = (e) => {
     setText(e.target.value);
-    setIsFileSelected(false);
-    setSummary(null);
+    if (isFileSelected) {
+      setIsFileSelected(false);
+    }
+    if (summary) {
+      setSummary(null);
+      setEditedSummary(null);
+      setSessionId(null);
+    }
   };
 
   const generateSummary = async () => {
@@ -68,7 +77,7 @@ function Maincontent() {
     }
 
     setLoading(true);
-    setMessage("");
+    setMessage("Generating summary...");
 
     try {
       const response = await fetch(`${API_BASE_URL}/start-session`, {
@@ -78,27 +87,32 @@ function Maincontent() {
         },
         body: JSON.stringify({
           transcript: text,
-          userInstruction: userPrompt || "Generate a clear, concise summary"
+          userInstruction: userPrompt || "Generate a clear, concise summary with bullet points and detailed summary"
         }),
       });
 
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
+      }
+
       const data = await response.json();
 
-      if (response.ok) {
+      if (data.summary) {
         setSummary(data.summary);
         setEditedSummary(data.summary);
         setSessionId(data.sessionId);
         setMessage("Summary generated successfully");
       } else {
-        setMessage(`Error: ${data.error}`);
+        throw new Error("No summary received from server");
       }
     } catch (error) {
       console.error("Error generating summary:", error);
-      setMessage("Error connecting to server. Please try again.");
+      setMessage(`Error: ${error.message}`);
     }
 
     setLoading(false);
-    setTimeout(() => setMessage(""), 3000);
+    setTimeout(() => setMessage(""), 5000);
   };
 
   const refineSummary = async () => {
@@ -109,6 +123,7 @@ function Maincontent() {
     }
 
     setLoading(true);
+    setMessage("Refining summary...");
 
     try {
       const response = await fetch(`${API_BASE_URL}/summarize`, {
@@ -122,26 +137,33 @@ function Maincontent() {
         }),
       });
 
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
+      }
+
       const data = await response.json();
 
-      if (response.ok) {
+      if (data.summary) {
         setSummary(data.summary);
         setEditedSummary(data.summary);
         setMessage("Summary refined successfully");
         setUserPrompt("");
       } else {
-        setMessage(`Error: ${data.error}`);
+        throw new Error("No refined summary received from server");
       }
     } catch (error) {
       console.error("Error refining summary:", error);
-      setMessage("Error refining summary. Please try again.");
+      setMessage(`Error: ${error.message}`);
     }
 
     setLoading(false);
-    setTimeout(() => setMessage(""), 3000);
+    setTimeout(() => setMessage(""), 5000);
   };
 
   const formatSummaryForEmail = (summary) => {
+    if (!summary) return "";
+
     const bulletPoints = Array.isArray(summary.initial_bullet_summary) 
       ? summary.initial_bullet_summary 
       : [summary.initial_bullet_summary];
@@ -153,16 +175,20 @@ function Maincontent() {
     let emailBody = "MEETING SUMMARY\n\n";
     emailBody += "KEY POINTS:\n";
     bulletPoints.forEach((point, index) => {
-      emailBody += `${index + 1}. ${point}\n`;
+      if (point && point.trim()) {
+        emailBody += `${index + 1}. ${point}\n`;
+      }
     });
     
     emailBody += "\nDETAILED SUMMARY:\n";
-    emailBody += summary.user_customized_summary + "\n\n";
+    emailBody += (summary.user_customized_summary || "No detailed summary available") + "\n\n";
     
-    if (notes.length > 0) {
+    if (notes.length > 0 && notes.some(note => note && note.trim())) {
       emailBody += "ADDITIONAL NOTES:\n";
-      notes.forEach((note, index) => {
-        emailBody += `• ${note}\n`;
+      notes.forEach((note) => {
+        if (note && note.trim()) {
+          emailBody += `• ${note}\n`;
+        }
       });
       emailBody += "\n";
     }
@@ -202,7 +228,19 @@ function Maincontent() {
       await navigator.clipboard.writeText(textToCopy);
       setMessage("Summary copied to clipboard");
     } catch (err) {
-      setMessage("Failed to copy to clipboard. Please try again.");
+      console.error("Failed to copy:", err);
+      // Fallback for older browsers
+      try {
+        const textArea = document.createElement('textarea');
+        textArea.value = textToCopy;
+        document.body.appendChild(textArea);
+        textArea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textArea);
+        setMessage("Summary copied to clipboard");
+      } catch (fallbackErr) {
+        setMessage("Failed to copy to clipboard. Please try selecting and copying manually.");
+      }
     }
     setTimeout(() => setMessage(""), 3000);
   };
@@ -237,7 +275,7 @@ function Maincontent() {
   };
 
   const handleBulletEdit = (index, value) => {
-    const newBullets = [...editedSummary.initial_bullet_summary];
+    const newBullets = [...(editedSummary.initial_bullet_summary || [])];
     newBullets[index] = value;
     setEditedSummary({
       ...editedSummary,
@@ -263,10 +301,26 @@ function Maincontent() {
   };
 
   const removeBulletPoint = (index) => {
-    const newBullets = editedSummary.initial_bullet_summary.filter((_, i) => i !== index);
+    const newBullets = (editedSummary.initial_bullet_summary || []).filter((_, i) => i !== index);
     setEditedSummary({
       ...editedSummary,
       initial_bullet_summary: newBullets
+    });
+  };
+
+  const addNote = () => {
+    const newNotes = [...(editedSummary.clarifications_or_notes || []), ""];
+    setEditedSummary({
+      ...editedSummary,
+      clarifications_or_notes: newNotes
+    });
+  };
+
+  const removeNote = (index) => {
+    const newNotes = (editedSummary.clarifications_or_notes || []).filter((_, i) => i !== index);
+    setEditedSummary({
+      ...editedSummary,
+      clarifications_or_notes: newNotes
     });
   };
 
@@ -291,8 +345,8 @@ function Maincontent() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className={`mt-6 p-4 border ${
             message.includes("Error") || message.includes("Failed") ? 
-            "bg-gray-900 text-white border-red-500" : 
-            "bg-gray-900 text-white border-gray-600"
+            "bg-red-900 text-red-100 border-red-500" : 
+            "bg-green-900 text-green-100 border-green-500"
           }`}>
             <p className="text-sm font-light">{message}</p>
           </div>
@@ -316,7 +370,7 @@ function Maincontent() {
 
               <label className={`w-full cursor-pointer flex flex-col items-center justify-center border-2 border-dashed p-8 transition-all duration-200 mb-6 ${
                   isFileSelected ? 
-                  "border-white bg-gray-800" : 
+                  "border-green-500 bg-green-900/20" : 
                   "border-gray-600 hover:border-gray-400"
                 }`}
               >
@@ -381,7 +435,7 @@ function Maincontent() {
                   disabled={loading || !text.trim()}
                   className="flex-1 bg-white text-black px-6 py-3 hover:bg-gray-200 disabled:bg-gray-600 disabled:text-gray-400 disabled:cursor-not-allowed font-light transition-all duration-200"
                 >
-                  {loading ? (
+                  {loading && !summary ? (
                     <div className="flex items-center justify-center">
                       <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-black mr-2"></div>
                       Generating Summary...
@@ -397,7 +451,7 @@ function Maincontent() {
                     disabled={loading || !userPrompt.trim()}
                     className="flex-1 bg-gray-700 text-white px-6 py-3 hover:bg-gray-600 disabled:bg-gray-800 disabled:text-gray-500 disabled:cursor-not-allowed font-light transition-all duration-200"
                   >
-                    {loading ? (
+                    {loading && summary ? (
                       <div className="flex items-center justify-center">
                         <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
                         Refining Summary...
@@ -460,18 +514,20 @@ function Maincontent() {
                       </button>
                     </div>
                     <div className="space-y-3">
-                      {editedSummary.initial_bullet_summary?.map((bullet, index) => (
+                      {(editedSummary.initial_bullet_summary || []).map((bullet, index) => (
                         <div key={index} className="flex items-center gap-3">
                           <input
                             type="text"
-                            value={bullet}
+                            value={bullet || ""}
                             onChange={(e) => handleBulletEdit(index, e.target.value)}
                             className="flex-1 px-4 py-3 border border-gray-600 bg-gray-800 text-white placeholder-gray-400 focus:border-white focus:outline-none text-sm font-light"
+                            placeholder="Enter a key point..."
                           />
-                          {editedSummary.initial_bullet_summary.length > 1 && (
+                          {(editedSummary.initial_bullet_summary || []).length > 1 && (
                             <button
                               onClick={() => removeBulletPoint(index)}
-                              className="text-gray-500 hover:text-white px-2"
+                              className="text-gray-500 hover:text-red-400 px-2 text-lg"
+                              title="Remove this point"
                             >
                               ×
                             </button>
@@ -490,27 +546,43 @@ function Maincontent() {
                       value={editedSummary.user_customized_summary || ""}
                       onChange={(e) => handleSummaryEdit("user_customized_summary", e.target.value)}
                       className="w-full px-4 py-3 border border-gray-600 bg-gray-800 text-white placeholder-gray-400 focus:border-white focus:outline-none resize-none text-sm font-light"
+                      placeholder="Enter detailed summary..."
                     />
                   </div>
 
-                  {editedSummary.clarifications_or_notes?.length > 0 && (
-                    <div>
-                      <label className="block text-sm font-light text-white mb-4">
+                  <div>
+                    <div className="flex items-center justify-between mb-4">
+                      <label className="block text-sm font-light text-white">
                         Additional Notes
                       </label>
-                      <div className="space-y-3">
-                        {editedSummary.clarifications_or_notes.map((note, index) => (
-                          <input
-                            key={index}
-                            type="text"
-                            value={note}
-                            onChange={(e) => handleNotesEdit(index, e.target.value)}
-                            className="w-full px-4 py-3 border border-gray-600 bg-gray-800 text-white placeholder-gray-400 focus:border-white focus:outline-none text-sm font-light"
-                          />
-                        ))}
-                      </div>
+                      <button
+                        onClick={addNote}
+                        className="text-white hover:text-gray-300 text-sm font-light underline"
+                      >
+                        Add Note
+                      </button>
                     </div>
-                  )}
+                    <div className="space-y-3">
+                      {(editedSummary.clarifications_or_notes || []).map((note, index) => (
+                        <div key={index} className="flex items-center gap-3">
+                          <input
+                            type="text"
+                            value={note || ""}
+                            onChange={(e) => handleNotesEdit(index, e.target.value)}
+                            className="flex-1 px-4 py-3 border border-gray-600 bg-gray-800 text-white placeholder-gray-400 focus:border-white focus:outline-none text-sm font-light"
+                            placeholder="Enter additional note..."
+                          />
+                          <button
+                            onClick={() => removeNote(index)}
+                            className="text-gray-500 hover:text-red-400 px-2 text-lg"
+                            title="Remove this note"
+                          >
+                            ×
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
                 </div>
               </div>
             )}
